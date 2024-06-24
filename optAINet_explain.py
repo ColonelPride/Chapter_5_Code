@@ -17,7 +17,7 @@ import matplotlib.pyplot as plt
 # from astropy.stats import median_absolute_deviation
 from scipy import stats
 import math
-from write_to_db import *
+# from write_to_db import *#removed for colab notebook circular dependancy
 # from create_db import *
 from sklearn.linear_model import LinearRegression
 import csv
