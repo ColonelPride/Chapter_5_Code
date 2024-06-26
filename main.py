@@ -20,6 +20,7 @@ from optAINet_explain import *
 from shap_explain import *
 from create_db import *
 from write_to_db import *
+from predict import *
 
 import sqlite3
 import requests
@@ -238,7 +239,7 @@ def main(argv):
     keras_model_filename = 'models/keras_model_lending_new_data_2.h5' #most models are this one for experiment
     #keras_model_filename = '../keras_models/keras_model_lending_17_11_20.h5'
     #keras_model_filename = 'keras_model_compas_test_cf.h5'
-    #keras_model_filename = 'keras_model_adult_test_cf.h5'
+
 
     X_train, X_test, y_train, y_test = train_test_split(dataset_cat['X'], dataset_cat['y'], test_size = 0.2, random_state=0)#with dummies
 

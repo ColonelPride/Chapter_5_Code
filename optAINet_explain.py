@@ -22,7 +22,7 @@ import math
 from sklearn.linear_model import LinearRegression
 import csv
 import gc
-from predict import *
+#from predict import * #colab issue
 
 sort_by = 'distance'
 #sort_by = 'cost'
