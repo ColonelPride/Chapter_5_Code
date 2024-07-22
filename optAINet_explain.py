@@ -1200,7 +1200,7 @@ def init_var_optAINet(blackbox, X, line_number, dataset, prob_dict, db_file, imp
     # prediction = predict_label(blackbox.predict_proba(X[line_number].reshape(1,-1)))
     #prediction = predict_label(blackbox.predict(X[line_number].reshape(1, -1))) #old line
     #new line for keras 3
-    prediction = predict_label(predict_single(blackbox,X[line_number]))
+    prediction = predict_label(predict.predict_single(blackbox,X[line_number]))
     # problem configuration
 
     line = X[line_number]  # np rows
