@@ -25,3 +25,8 @@ def predict_batch(model, X):  # get y prediction from single array of X
 def predict_1D(model,x):#imput is 1D array not changed internally
     y = model(x)
     return y
+def predict_2D(model,x):#input is made a 2D array
+    x = x.reshape(1,-1)
+    y = model(x)
+    y = np.array(y[0][0])
+    return y

@@ -77,7 +77,7 @@ def keras_pred(model, line):
     # print('line: ',line)
     #pred = float(model.predict(line, verbose=0)[0])#old line for keras 2
     #keras 3 new line
-    pred = float(predict.predict_single(model,line))
+    pred = float(predict.predict_2D(model,line))
     pred_array = [1 - pred, pred]
     # print('pred_array:',pred_array)
     return pred_array
