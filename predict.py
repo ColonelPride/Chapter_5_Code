@@ -21,3 +21,7 @@ def predict_batch(model, X):  # get y prediction from single array of X
     # get 3D tensor back to 1D y array
     y = y[0].reshape(-1)
     return y #output 1D  array
+
+def predict_1D(model,x)#imput is 1D array not changed internally
+    y = model(x)
+    return y
