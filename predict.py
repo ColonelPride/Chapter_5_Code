@@ -2,12 +2,17 @@ import keras
 import tensorflow as tf
 import numpy as np
 
+def predict_no_reshape(model,x):
+    y = model(x)
+    print('y',y)
+    return y
 def predict_single(model,x): #get y prediction from single array of X
     #make 1D x into 3D (None,None,1)
     x=x.reshape(1,1,-1)
     y = model(x)
     #get 3D tensor back to 1D y array
     y=np.array(y[0][0][0])
+
     return y #1D array out
 
 def predict_batch(model, X):  # get y prediction from single array of X

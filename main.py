@@ -527,7 +527,7 @@ def get_ais_exp(line, blackbox,X_train, y_train, X_test,dataset, keras_model_fil
     #new line
     df_out = pd.DataFrame(columns=get_line_columns(dataset))
     lime_coeffs_reorder = list() # new line
-    result, df_out = init_var_optAINet(blackbox, X_test, line, dataset, prob_dict, db_file, lime_coeffs_reorder, df_out)
+    result, df_out = init_var_optAINet(blackbox, X_test, line, dataset, prob_dict, db_file, lime_coeffs_reorder, df_out, {})
 
 def get_ia_exp(line, blackbox,X_train, y_train, X_test,dataset,keras_model_filename, db_file):
 
@@ -546,7 +546,7 @@ def get_ia_exp(line, blackbox,X_train, y_train, X_test,dataset,keras_model_filen
 
     df_out = pd.DataFrame(columns = get_line_columns(dataset))
 
-    result, df_out = init_var_optAINet(blackbox,X_test, line, dataset,prob_dict,db_file,lime_coeffs_reorder,df_out)
+    result, df_out = init_var_optAINet(blackbox,X_test, line, dataset,prob_dict,db_file,lime_coeffs_reorder,df_out, {}) #parameter_dict is last empty dict {}
     print('df_out of length: ',df_out.values.shape[0])
 
 def get_shap_exp(line, blackbox,X_train, X_test, dataset, db_file):
