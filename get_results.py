@@ -12,6 +12,10 @@ import pandas as pd
 from sklearn.neighbors import  KNeighborsClassifier
 import tensorflow as tf
 import keras
+
+from predict import predict_single
+
+
 #import present_explanation
 def create_connection(db_file):
     """ create a database connection to a database that resides
@@ -844,6 +848,7 @@ def get_counts(record,dataset):
     return len(dataset['non_continuous']),len(dataset['continuous']),len(dataset['continuous']) + len(dataset['non_continuous'])#because count are bugged getting direct from dataset
 
 def get_stats_write_stats(dataset,explanation,csv_prox_filename, csv_div_filename):
+    #writes diversity file
     with open(csv_div_filename,'w',encoding='UTF8') as div_f:
         writer = csv.writer(div_f)
         header = ['record_id', 'cat_diversity', 'cont_diversity', 'count_diversity']
@@ -852,12 +857,12 @@ def get_stats_write_stats(dataset,explanation,csv_prox_filename, csv_div_filenam
             cat_div, cont_div, count_div = get_write_diversity(dataset,explanation,csv_div_filename,i)
             writer.writerow([i, cat_div, cont_div, count_div])
         div_f.close()
-
+    #writes proximity file
     with open(csv_prox_filename,'w',encoding='UTF8') as f:
         writer = csv.writer(f)
         header = ['record_id', 'delta_id', 'valid', 'cost','cont_proximity', 'cat_proximity', 'sparsity']
         writer.writerow(header)
-        print('prox writer')
+
         #create blank array of len 10
         #continuous_arr = np.zeros(10)#counts number of changed cont variables
         #continuous_count_arr = np.zeros(10)#counts number of cfs
@@ -873,9 +878,7 @@ def get_stats_write_stats(dataset,explanation,csv_prox_filename, csv_div_filenam
                 cont_prox = 0
                 cat_prox = 0
                 diversity = 0
-                #cont_count = 0
                 cont_count = len(dataset['continuous'])
-                #cat_count = 0
                 cat_count = len(dataset['non_continuous'])
                 cont_dist = 0
                 cat_dist = 0
@@ -884,11 +887,6 @@ def get_stats_write_stats(dataset,explanation,csv_prox_filename, csv_div_filenam
                 #print('before validity')
                 validity,cost = get_validity(explanation[i][i+1],delta_str, dataset['class_name'],dataset['labels'])
 
-                #print('after validity')
-                #print('validity: ', validity, ' cost: ', cost)
-                #for d_dict in explanation[i][i+1]['delta'][delta_str]:#change to loop through record
-
-                #print('d_dict: ', d_dict)
                 def set_cat_dist(d_dict,cat_dist,cat_count):
                     if d_dict['value'] != d_dict['record_value']:
                         cat_dist += 1
@@ -933,9 +931,9 @@ def get_stats_write_stats(dataset,explanation,csv_prox_filename, csv_div_filenam
                             cat_dist, cat_count = set_cat_dist(d_dict,cat_dist,cat_count)
                             sparsity += get_sparsity(d_dict)
 
-                #cat_count and cont_count have failed for DiCE record_object, which only records features that chnage in deltas not all features
+                #cat_count and cont_count have failed for DiCE record_object, which only records features that change in deltas not all features
                 cat_count, cont_count, count_count = get_counts(explanation[i][i+1]['record'],dataset)
-                print(cat_count, cont_count, count_count)
+                #print(cat_count, cont_count, count_count)
 
                 if cont_count > 0 :
                     #cont_prox = (-1/cont_count) * cont_dist #k is used when summing all rows in csv
@@ -947,9 +945,8 @@ def get_stats_write_stats(dataset,explanation,csv_prox_filename, csv_div_filenam
                     print ('cat_dist: ',cat_dist)
                 else:
                     cat_prox = 1-(1 * cat_dist) #k is used when summing all rows in csv
-                    breakpoint()
+                    breakpoint()#stop if this logic breaks
                 if (cat_count + cont_count) > 0:
-                    #sparsity = 1- (sparsity /(cat_count + cont_count)) #k is used when summing all rows in csv
                     sparsity = 1 - (sparsity /( len(dataset['continuous'])  + len(dataset['non_continuous'])))
                 else:
                     breakpoint('error in counting features for sparsity')
@@ -972,9 +969,406 @@ def get_stats_write_stats(dataset,explanation,csv_prox_filename, csv_div_filenam
         f.close()
 
 
+def set_examples_csv(explanation, dataset,model_file_name,r_constant,num_tests_per_example,num_examples, examples_file_name):#output is csv file with file_name
+    #r_constant = 1 #for dividing continuous feautres in line with Mothilal et al 2020 values {0.5,1.2}
+    #num_tests_per_example = 10
+    #num_examples = 100
+    """
+    func outputs a csv
+    for every line input from explanation outputs a number of lines given by num_tests_per_example
+    each output line is is random :
+    cat variables are random values
+    cont variables are a random value modified by the mads of the value and a radius r
+    these are tested elsewhere by a 1NN used in set_output_csv
+    """
+    #blackbox = keras.models.load_model('keras_models/keras_model_lending_MinMaxScaler_27_06_22.h5')
+    blackbox = keras.models.load_model(model_file_name)
+    test_df = init_row(dataset)
+
+
+    #example and num_tests are int i in their for loop operations
+    for example in range(num_examples ):
+        for num_tests in range(num_tests_per_example):
+            test_row = init_row_X(dataset)
+            for column in dataset['X_columns']:
+                ran = np.random.rand()#ran is a random number between 0 and 1
+
+                if column in dataset['continuous']:
+                    mad = dataset['mads'][column]#median absolute deviation
+                    r_value =''
+                    for r_dict in explanation[example][example+1]['record']:
+
+                        if r_dict['field'] == column:
+                            r_value = r_dict['value']
+                        if dataset['name']=='LoanStats3a':
+                            human_col = dataset['data_human_dict'][column]
+                            if r_dict['field'] == human_col:
+                                r_value = float(r_dict['value'])
+                        #else: #is categorical
+                            #r_value = dataset['data_human_dict'][column]['value']
+                    if r_value == '':
+                        print('r_value not assigned')
+                        breakpoint()
+
+                    radius = ((2*ran)-1)*mad#r_constant replaced by mad (median absolute deviation)
+                    scaled_r_value = dataset['scaler'][column].transform(np.array(r_value).reshape(1,-1))
+                    scaled_radius = dataset['scaler'][column].transform(np.array(radius).reshape(1,-1))
+                    #go from -r to r where r is mad
+                    if (scaled_r_value + scaled_radius) < 0:
+                        mod_value = [0]
+                    elif (scaled_r_value + scaled_radius) > 1:
+                        mod_value = [1]
+                    else:
+                        mod_value = scaled_r_value[0] + scaled_radius[0]
+                    test_row[column] = mod_value
+                else:#categorical
+                    dummy = dataset['dummy'][column]
+                    num_dummies = len(dummy)
+                    dummy_num = math.trunc(ran * num_dummies)
+                    value = dummy[dummy_num]
+                    for dum in range(num_dummies):
+                        if dummy[dum] == value:
+                            test_row[dummy[dum]] = [1]
+                        else:
+                            test_row[dummy[dum]] = [0]
+            #get y label (from MTurk marking code)
+
+            #test_row[dataset['class_name']] = blackbox.predict(test_row.values)#is shape (1,32) needs to be (0,0,32) needs custom method from my predict class
+            test_row[dataset['class_name']] = predict_single(blackbox, test_row.values)
+            test_row['test_number'] = num_tests
+            test_row['example'] = example
+            test_df = pd.concat([test_df,test_row])
+    test_df.to_csv(examples_file_name)
+
+def set_output_csv(explanation, dataset,file_name_in,file_name_out,row_numbers):
+    """
+    this tests examples provided by set_examples
+    """
+    input_df = pd.DataFrame(columns=dataset['X_columns_with_dummies'])
+    input_df[dataset['class_name']] = []
+    output_df = pd.DataFrame(columns=['example','test','keras_predict','knn_predict','original_class','number_of_deltas'])#,'original_prediction'])
+    for row_number in range(row_numbers):
+        input_row = init_row(dataset)
+        for entry in explanation [row_number][row_number+1]['record']:#don't forget class name
+            if dataset['name']=='LoanStats3a':                                    #if column in dataset['continuous']:#redundant
+                if entry['field'] == dataset['class_name']:#write as 0 or 1
+                    for i in range(len(dataset['labels'])):
+                        if dataset['labels'][i] == entry['value']:
+                            input_row[dataset['class_name']] = [i]
+                            class_int = i
+                            original_class = i
+                else:
+                    if entry['field'] in dataset['human_data_dict'].keys() and dataset['human_data_dict'][entry['field']] in dataset['continuous']:
+
+                        data_col = dataset['human_data_dict'][entry['field']]
+
+                        input_row[data_col]=normalise_continuous(dataset,data_col,float(entry['value']))
+                    #elif entry['field'] in ['cost', 'distance']:
+                        #take no action
+                    else:
+                        for cat_feature in dataset['dummy']:
+                            if entry['field'] == 'purpose of loan':
+                                entry['field']= 'purpose'
+                            if entry['field'] == 'credit rating grade':
+                                entry['field']= 'grade'
+                            if entry['field']=='term':
+                                entry['field']='term of loan'
+                            if entry['field']== 'home_ownership':
+                                entry['field'] = 'home ownership'
+                            if dataset['human_data_dict'][entry['field']] == cat_feature:
+                                for dummy in dataset['dummy'][cat_feature]:
+                                    if entry['field']== 'home ownership':
+
+                                        if entry['value'] == 'rent':
+                                            dummy_name = dataset['human_data_dict'][entry['field']] + '_RENT'
+                                        elif entry['value'] == 'mortgaged':
+                                            dummy_name = dataset['human_data_dict'][entry['field']] + '_MORTGAGE'
+                                        elif entry['value'] == 'none':
+                                            dummy_name = dataset['human_data_dict'][entry['field']] + '_NONE'
+                                        elif entry['value'] == 'other':
+                                            dummy_name = dataset['human_data_dict'][entry['field']] + '_OTHER'
+                                        elif entry['value'] == 'own':
+                                            dummy_name = dataset['human_data_dict'][entry['field']] + '_OWN'
+                                        else:
+                                            dummy_name = dataset['human_data_dict'][entry['field']]+'_'+entry['value']
+
+                                    elif  entry['field']== 'term of loan':
+                                        if entry['value'] == '36 months':
+                                            dummy_name = dataset['human_data_dict'][entry['field']] + '_ 36 months'
+                                        if entry['value'] == '60 months':
+                                            dummy_name = dataset['human_data_dict'][entry['field']] + '_ 60 months'
+                                    elif  entry['field']== 'purpose':
+                                        if entry['value']=='major purchase':
+                                            dummy_name =entry['field'] + '_major_purchase'
+                                        elif entry['value']=='credit card':
+                                            dummy_name =entry['field'] + '_credit_card'
+                                        elif entry['value']=='debt consolidation':
+                                            dummy_name =entry['field'] + '_debt_consolidation'
+                                        elif entry['value']=='home improvement':
+                                            dummy_name =entry['field'] + '_home_improvement'
+                                        elif entry['value']=='renewable energy':
+                                            dummy_name =entry['field'] + '_renewable_energy'
+                                        elif entry['value']=='small business':
+                                            dummy_name =entry['field'] + '_small_business'
+                                        else:
+                                            dummy_name =entry['field'] + '_'+ entry['value']
+                                    else:
+                                        dummy_name = entry['field'] + '_'+ entry['value']
+
+                                    if dummy_name == dummy:
+                                        input_row[dummy] = [1]
+
+                                    else:
+                                        input_row[dummy] =[0]
+
+
+
+            else:#not lending
+
+                if entry['field'] in dataset['continuous']:
+                    input_row[entry['field']]=normalise_continuous(dataset,entry['field'],float(entry['value']))
+                elif entry['field'] == dataset['class_name']:#write as 0 or 1
+                    for i in range(len(dataset['labels'])):
+                        if dataset['labels'][i] == entry['value']:
+                            input_row[dataset['class_name']] = [i]
+                            class_int = i
+                            original_class = i
+                else:#dummied cat features
+                    for cat_feature in dataset['dummy']:
+                        if entry['field'] == cat_feature:
+                            for dummy in dataset['dummy'][cat_feature]:
+                                dummy_name = entry['field'] + '_ '+ entry['value']
+                                if dummy_name == dummy:
+                                    input_row[dummy] = [1]
+                                else:
+                                    input_row[dummy] =[0]
+
+        record_row = input_row
+        input_df = pd.concat([input_df,input_row])
+        input_df.reset_index()
+        #add deltas
+        number_of_deltas = len(explanation[row_number][row_number+1]['delta'])
+        for delta_num in explanation[row_number][row_number+1]['delta']:#delta_num is a str
+            #because for DiCE only some features in delta first read in record as df
+            input_row = record_row
+
+            for entry in explanation[row_number][row_number+1]['delta'][delta_num]:
+                if dataset['name']=='LoanStats3a':
+                    if entry['field'] == dataset['class_name']:#write as 0 or 1
+                        for i in range(len(dataset['labels'])):
+                            if dataset['labels'][i] == entry['value']:
+                                input_row[dataset['class_name']] = [i]
+                                class_int = i
+                                original_class = i
+                    else:
+                        if entry['field'] in dataset['human_data_dict'].keys() and dataset['human_data_dict'][entry['field']] in dataset['continuous']:
+                            data_col = dataset['human_data_dict'][entry['field']]
+                            input_row[data_col]=normalise_continuous(dataset,data_col,float(entry['value']))
+                        elif entry['field'] in ['cost', 'distance']:
+                            nonsense_variable = 'nonsense' #an action to be no action only a side effect on a variable found no wehere else
+                        else:
+                            for cat_feature in dataset['dummy']:
+                                if entry['field'] == 'purpose of loan':
+                                    entry['field']= 'purpose'
+                                if entry['field'] == 'credit rating grade':
+                                    entry['field']= 'grade'
+                                if entry['field'] =='home_ownership':
+                                    entry['field'] = 'home ownership'
+                                if entry['field'] == 'term':
+                                    entry['field'] = 'term of loan'
+                                if dataset['human_data_dict'][entry['field']] == cat_feature:
+                                    for dummy in dataset['dummy'][cat_feature]:
+                                        if entry['field']== 'home ownership':
+                                            if entry['value'] == 'rent':
+                                                dummy_name = dataset['human_data_dict'][entry['field']] + '_RENT'
+                                            elif entry['value'] == 'mortgaged':
+                                                dummy_name = dataset['human_data_dict'][entry['field']] + '_MORTGAGE'
+                                            elif entry['value'] == 'none':
+                                                dummy_name = dataset['human_data_dict'][entry['field']] + '_NONE'
+                                            elif entry['value'] == 'other':
+                                                dummy_name = dataset['human_data_dict'][entry['field']] + '_OTHER'
+                                            elif entry['value'] == 'own':
+                                                dummy_name = dataset['human_data_dict'][entry['field']] + '_OWN'
+                                            else:
+                                                dummy_name = dataset['human_data_dict'][entry['field']] + '_' + entry['value']
+
+                                        elif  entry['field']== 'term of loan':
+                                            if entry['value'] == '36 months':
+                                                dummy_name = dataset['human_data_dict'][entry['field']] + '_ 36 months'
+                                            if entry['value'] == '60 months':
+                                                dummy_name = dataset['human_data_dict'][entry['field']] + '_ 60 months'
+                                        elif  entry['field']== 'purpose':
+                                            if entry['value']=='major purchase':
+                                                dummy_name =entry['field'] + '_major_purchase'
+                                            elif entry['value']=='credit card':
+                                                dummy_name =entry['field'] + '_credit_card'
+                                            elif entry['value']=='debt consolidation':
+                                                dummy_name =entry['field'] + '_debt_consolidation'
+                                            elif entry['value']=='home improvement':
+                                                dummy_name =entry['field'] + '_home_improvement'
+                                            elif entry['value']=='renewable energy':
+                                                dummy_name =entry['field'] + '_renewable_energy'
+                                            elif entry['value']=='small business':
+                                                dummy_name =entry['field'] + '_small_business'
+                                            else:
+                                                dummy_name =entry['field'] + '_'+ entry['value']
+                                        else:
+                                            dummy_name = entry['field'] + '_'+ entry['value']
+                                        if dummy_name == dummy:
+                                            input_row[dummy] = [1]
+                                        else:
+                                            input_row[dummy] =[0]
+
+                else:#not lending
+                    if entry['field'] in dataset['continuous']:
+
+                        input_row[entry['field']]=normalise_continuous(dataset,entry['field'],float(entry['value']))[0]
+                    else:#dummied cat features
+                        for cat_feature in dataset['dummy']:
+                            if entry['field'] == cat_feature:
+                                for dummy in dataset['dummy'][cat_feature]:
+                                    dummy_name = entry['field'] + '_ '+ entry['value']
+                                    if dummy_name == dummy:
+                                        input_row[dummy] = [1]
+                                    else:
+                                        input_row[dummy] = [0]
+            input_row[dataset['class_name']] = [get_class_int(class_int)]#is a cf so therefore other class to record
+            input_df = pd.concat([input_df,input_row])
+
+            #have df next create 1NN classifier for local points
+        X = input_df[dataset['X_columns_with_dummies']]#.values
+        y = input_df[dataset['class_name']]#.values
+
+        knn_model = KNeighborsClassifier(n_neighbors=1)
+        knn_model.fit(X,y)
+        #get relevant rows from csv of generated local points
+        local_df = pd.read_csv(file_name_in)
+        example_df = local_df.loc[local_df['example']==row_number]
+        keras_predict = example_df[dataset['class_name']].reset_index(drop=True)
+
+        number_of_tests = len(example_df['test_number'])
+        example_df = example_df[dataset['X_columns_with_dummies']]
+        knn_predict = knn_model.predict(example_df.values)
+
+        for row in range(number_of_tests):#['example','test','keras_predict','knn_predict']
+            output_row = pd.DataFrame(columns=['example','test','keras_predict','knn_predict'])
+            output_row['example'] = [row_number]
+            output_row['test'] = [row]
+            output_row['keras_predict'] = [keras_predict[row]]
+            output_row['knn_predict'] = [knn_predict[row]]
+            output_row['original_class']= original_class
+            output_row['number_of_deltas']=number_of_deltas
+            output_row['number_of_deltas']=number_of_deltas
+            output_df = pd.concat([output_df,output_row])
+    output_df.to_csv(file_name_out)
+
+def knn_stats(output_csv):
+
+    marking_df = pd.read_csv(output_csv)
+
+    # need p,r,f1
+    # 'We use precision, recall, and F1 for the counterfactual outcome class (Figure 3) as our main evaluation metrics because of the class imbalance in data points near the original input. To evaluate the sensitivity of these metrics to varying distance from the original input, we show these metrics for points sampled within varying distance thresholds'
+    # precision TP/TP+FP
+    # recall is TP/TP+FN
+    # want cf class for  knn  this is the opposite of keras_pred
+    # p=0
+    # r=0
+    TP = 0
+    FP = 0
+    TN = 0
+    FN = 0
+    number_wanted_deltas = 'NA'#8  # int or 'NA'
+    for row in range(marking_df.values.shape[0]):
+        if number_wanted_deltas == 'NA':
+            if marking_df['original_class'][row] == 0:
+                if marking_df['keras_predict'][row] < 0.5 and int(marking_df['knn_predict'][row]) < 0.5:
+                    TN += 1
+                elif marking_df['keras_predict'][row] < 0.5 and int(marking_df['knn_predict'][row]) >= 0.5:
+                    FP += 1
+                elif marking_df['keras_predict'][row] >= 0.5 and int(marking_df['knn_predict'][row]) < 0.5:
+                    FN += 1
+                elif marking_df['keras_predict'][row] >= 0.5 and int(marking_df['knn_predict'][row]) > 0.5:
+                    TP += 1
+                else:
+                    print('logic error in p,r calcs')
+                    breakpoint()
+            else:  # original class == 1
+                if marking_df['keras_predict'][row] < 0.5 and int(marking_df['knn_predict'][row]) < 0.5:
+                    TP += 1
+                elif marking_df['keras_predict'][row] < 0.5 and int(marking_df['knn_predict'][row]) >= 0.5:
+                    FN += 1
+                elif marking_df['keras_predict'][row] >= 0.5 and int(marking_df['knn_predict'][row]) < 0.5:
+                    FP += 1
+                elif marking_df['keras_predict'][row] >= 0.5 and int(marking_df['knn_predict'][row]) > 0.5:
+                    TN += 1
+                else:
+                    print('logic error in p,r calcs')
+                    breakpoint()
+
+        else:
+            if number_wanted_deltas == marking_df['number_of_deltas'][row]:
+                if marking_df['original_class'][row] == 0:
+                    if marking_df['keras_predict'][row] < 0.5 and int(marking_df['knn_predict'][row]) < 0.5:
+                        TN += 1
+                    elif marking_df['keras_predict'][row] < 0.5 and int(marking_df['knn_predict'][row]) >= 0.5:
+                        FP += 1
+                    elif marking_df['keras_predict'][row] >= 0.5 and int(marking_df['knn_predict'][row]) < 0.5:
+                        FN += 1
+                    elif marking_df['keras_predict'][row] >= 0.5 and int(marking_df['knn_predict'][row]) > 0.5:
+                        TP += 1
+                    else:
+                        print('logic error in p,r calcs')
+                        breakpoint()
+                else:  # original class == 1
+                    if marking_df['keras_predict'][row] < 0.5 and int(marking_df['knn_predict'][row]) < 0.5:
+                        TP += 1
+                    elif marking_df['keras_predict'][row] < 0.5 and int(marking_df['knn_predict'][row]) >= 0.5:
+                        FN += 1
+                    elif marking_df['keras_predict'][row] >= 0.5 and int(marking_df['knn_predict'][row]) < 0.5:
+                        FP += 1
+                    elif marking_df['keras_predict'][row] >= 0.5 and int(marking_df['knn_predict'][row]) > 0.5:
+                        TN += 1
+                    else:
+                        print('logic error in p,r calcs')
+                        breakpoint()
+
+    if TP == 0 or FP == 0 or TN == 0 or FN == 0:
+        print('one of the metrics == 0, potential div by 0 error')
+        breakpoint()
+    precision = TP / (TP + FP)
+    recall = TP / (TP + FN)
+    f1 = (2 * precision * recall) / (precision + recall)  # f1 for +ve predictions
+    other_precision = TN / (TN + FN)
+    other_recall = TN / (TN + FP)
+    other_f1 = (2 * other_precision * other_recall) / (other_precision + other_recall)  # f1 for -ve redictions
+    accuracy = (TP + TN) / (TP + TN + FP + FN)  # accuracy is best for measuring both classes
+    print('TP: ', TP, ' TN: ', TN, ' FP: ', FP, ' FN: ', FN)
+    print('p: ', precision, ' r: ', recall, ' f1: ', f1)
+    print('-ve p: ', other_precision, ' -ve r: ', other_recall, '-ve f1: ', other_f1)
+    print('acc: ', accuracy)
+    breakpoint()
+
+
+
+def init_row(dataset):
+    input_row = init_row_X(dataset)
+    input_row[dataset['class_name']] = []
+    return input_row
+def init_row_X(dataset):
+    input_row = pd.DataFrame(columns = dataset['X_columns_with_dummies'])
+    return input_row
+def get_class_int(class_int):
+    if class_int == 0:
+        return 1
+    else:
+        return 0
+
+def normalise_continuous(dataset, field, value):
+    scaler = dataset['scaler'][field]
+    return scaler.transform(np.array(value).reshape(1,-1))
 
 def main(argv):#argv[1] = db_file (string) #argv[2] = pickled dataset (string) if entered as '' will default to lending dataset
-    if argv[1] == '':
+    if argv[1] == '':#default db file
         db_file = ('explanation_store/demo_10.db')
     else:
         db_file = ('explanation_store/' + argv[1])
@@ -1000,621 +1394,68 @@ def main(argv):#argv[1] = db_file (string) #argv[2] = pickled dataset (string) i
        json.dump(explanation,outfile)
     with open('JSON_out/explanation.p','wb') as pf:
         pickle.dump(explanation,pf)
-    if argv[3] == 'stats':
-        csv_prox_filename = input('Enter proximity csv file name: ')
-        csv_div_filename = input('Enter Diversity csv file name: ')
+
+    if argv[3] == 'create_stats':
+        csv_prox_filename = input('Enter Proximity csv file name (CR gives default name): ')#'lending_ia_prox.csv'
+        if csv_prox_filename == '':#default for ease of testing
+            csv_prox_filename = 'csv/proximity.csv'
+        csv_div_filename = input('Enter Diversity csv file name (CR gives default name) : ')#'lending_ia_div.csv'
+        if csv_div_filename == '':#default for ease of testing
+            csv_div_filename = 'csv/diversity.csv'
+
         get_stats_write_stats(dataset, explanation, csv_prox_filename, csv_div_filename)
-        #get_stats_write_stats(dataset, explanation, 'search_by_cost/compas/IA/mads/compas_ia_prox.csv','search_by_cost/compas/IA/mads/compas_ia_div.csv')
         breakpoint()
-    elif argv[3] == 'get_prox_csv':
+    elif argv[3] == 'set_examples_csv':
+        print('set_examples_csv() called, to create the examples used in INN test')
+        r_constant = 1
+        num_tests_per_example = 10
+        num_examples = 10
+        model_file_name = input('Enter model file name (CR for lending model)')
+        if model_file_name == '':
+            model_file_name = 'keras_models/keras_model_lending_MinMaxScaler_27_06_22.h5'
+        examples_file_name = input('Enter examples file name: (CR for default')
+        if examples_file_name == '':
+            examples_file_name = 'csv/examples.csv'
+        set_examples_csv(explanation, dataset, model_file_name, r_constant, num_tests_per_example, num_examples, examples_file_name)
 
-    #breakpoint()#used if only wanting stats
-
-
-    def init_row(dataset):
-        input_row = init_row_X(dataset)
-        input_row[dataset['class_name']] = []
-        return input_row
-    def init_row_X(dataset):
-        input_row = pd.DataFrame(columns = dataset['X_columns_with_dummies'])
-        return input_row
-    def get_class_int(class_int):
-        if class_int == 0:
-            return 1
-        else:
-            return 0
-    def normalise_continuous(dataset, field, value):
-        scaler = dataset['scaler'][field]
-        return scaler.transform(np.array(value).reshape(1,-1))
-
-    def set_examples_csv(file_name,r_constant,num_tests_per_example,num_examples):#output is csv file with file_name
-        #r_constant = 1 #for dividing continuous feautres in line with Mothilal et al 2020 values {0.5,1.2}
-        #num_tests_per_example = 10
-        #num_examples = 100
-        """
-        func outputs a csv
-        for every line input from explanation outputs a number of lines given by num_tests_per_example
-        each output line is is random :
-        cat variables are random values
-        cont variables are a random value modified b the mads of the value and a radius r
-        these are tested elsewhere by a 1NN used in set_output_csv
-        """
-        blackbox = keras.models.load_model('keras_models/keras_model_lending_MinMaxScaler_27_06_22.h5')
-        test_df = init_row(dataset)
-        for example in range(num_examples):
-            for num_tests in range(num_tests_per_example):
-                test_row = init_row_X(dataset)
-                for column in dataset['X_columns']:
-                    ran = np.random.rand()#ran is a random number between 0 and 1
-                    """
-                    if dataset['name']=='LoanStats3a':
-                        if column in dataset['continuous']:
-                            column = dataset['data_human_dict'][column]
-                        else: #is categorical
-                            column = dataset['data_human_dict'][column]['name']
-                    """
-                    #if r_dict['field'] == column:
-
-                    if column in dataset['continuous']:
-                        mad = dataset['mads'][column]#median absolute deviation
-                        r_value =''
-                        for r_dict in explanation[example][example+1]['record']:
-                            print('r_dict: ',r_dict)
-                            if r_dict['field'] == column:
-                                r_value = r_dict['value']
-                            if dataset['name']=='LoanStats3a':
-                                #if column in dataset['continuous']:#redundant
-                                human_col = dataset['data_human_dict'][column]
-                                if r_dict['field'] == human_col:
-                                    r_value = float(r_dict['value'])
-                            #else: #is categorical
-                                #r_value = dataset['data_human_dict'][column]['value']
-                        if r_value == '':
-                            print('r_value not assigned')
-                            breakpoint()
-                        #r_value = explanation [0][1]['record'][column]#get value from record
-                        radius = ((2*ran)-1)*mad#(mad*2*ran)-mad
-                        scaled_r_value = dataset['scaler'][column].transform(np.array(r_value).reshape(1,-1))
-                        scaled_radius = dataset['scaler'][column].transform(np.array(radius).reshape(1,-1))
-                        #go from -r to r where r is mad
-                        if (scaled_r_value + scaled_radius) < 0:
-                            mod_value = [0]
-                        elif (scaled_r_value + scaled_radius) > 1:
-                            mod_value = [1]
-                        else:
-                            mod_value = scaled_r_value[0] + scaled_radius[0]
-                        test_row[column] = mod_value
-                    else:#categorical
-                        dummy = dataset['dummy'][column]
-                        num_dummies = len(dummy)
-                        dummy_num = math.trunc(ran * num_dummies)
-                        value = dummy[dummy_num]
-                        for dum in range(num_dummies):
-                            if dummy[dum] == value:
-                                test_row[dummy[dum]] = [1]
-                            else:
-                                test_row[dummy[dum]] = [0]
-                #get y label (from MTurk marking code)
-
-                test_row[dataset['class_name']] = blackbox.predict(test_row.values)
-                test_row['test_number'] = num_tests
-                test_row['example'] = example
-                test_df = pd.concat([test_df,test_row])
-        test_df.to_csv(file_name)
-
-
-
-    def set_output_csv(file_name_in,file_name_out,row_numbers):
-        """
-        this tests examples provided by set_examples
-        """
-        input_df = pd.DataFrame(columns=dataset['X_columns_with_dummies'])
-        input_df[dataset['class_name']] = []
-        output_df = pd.DataFrame(columns=['example','test','keras_predict','knn_predict','original_class','number_of_deltas'])#,'original_prediction'])
-        for row_number in range(row_numbers):
-            input_row = init_row(dataset)
-            for entry in explanation [row_number][row_number+1]['record']:#don't forget class name
-                if dataset['name']=='LoanStats3a':                                    #if column in dataset['continuous']:#redundant
-                    if entry['field'] == dataset['class_name']:#write as 0 or 1
-                        for i in range(len(dataset['labels'])):
-                            if dataset['labels'][i] == entry['value']:
-                                input_row[dataset['class_name']] = [i]
-                                class_int = i
-                                original_class = i
-                    else:
-                        if entry['field'] in dataset['human_data_dict'].keys() and dataset['human_data_dict'][entry['field']] in dataset['continuous']:
-                            #print(entry)
-                            data_col = dataset['human_data_dict'][entry['field']]
-                            #print(data_col)
-                            input_row[data_col]=normalise_continuous(dataset,data_col,float(entry['value']))
-                        elif entry['field'] in ['cost', 'distance']:
-                            print(entry['field'])
-                            #take no action
-                        else:
-                            for cat_feature in dataset['dummy']:
-                                if entry['field'] == 'purpose of loan':
-                                    entry['field']= 'purpose'
-                                if entry['field'] == 'credit rating grade':
-                                    entry['field']= 'grade'
-                                if entry['field']=='term':
-                                    entry['field']='term of loan'
-                                #bodge temp fix below is it a rogue instance of the underscore in home_ownership or a deeper problem
-                                #print('record_A',dataset['human_data_dict'][entry['field']], cat_feature)
-                                print('entry[field]: ',entry['field'])
-                                if entry['field']== 'home_ownership':
-                                    entry['field'] = 'home ownership'
-                                if dataset['human_data_dict'][entry['field']] == cat_feature:
-                                    for dummy in dataset['dummy'][cat_feature]:
-                                        if entry['field']== 'home ownership':
-                                            print('entry field: ',entry['field'],' entry value: ',entry['value'])
-                                            if entry['value'] == 'rent':
-                                                dummy_name = dataset['human_data_dict'][entry['field']] + '_RENT'
-                                            elif entry['value'] == 'mortgaged':
-                                                dummy_name = dataset['human_data_dict'][entry['field']] + '_MORTGAGE'
-                                            elif entry['value'] == 'none':
-                                                dummy_name = dataset['human_data_dict'][entry['field']] + '_NONE'
-                                            elif entry['value'] == 'other':
-                                                dummy_name = dataset['human_data_dict'][entry['field']] + '_OTHER'
-                                            elif entry['value'] == 'own':
-                                                dummy_name = dataset['human_data_dict'][entry['field']] + '_OWN'
-                                            else:
-                                                dummy_name = dataset['human_data_dict'][entry['field']]+'_'+entry['value']
-                                                print(dummy_name)
-                                        elif  entry['field']== 'term of loan':
-                                            if entry['value'] == '36 months':
-                                                dummy_name = dataset['human_data_dict'][entry['field']] + '_ 36 months'
-                                            if entry['value'] == '60 months':
-                                                dummy_name = dataset['human_data_dict'][entry['field']] + '_ 60 months'
-                                        elif  entry['field']== 'purpose':
-                                            if entry['value']=='major purchase':
-                                                dummy_name =entry['field'] + '_major_purchase'
-                                            elif entry['value']=='credit card':
-                                                dummy_name =entry['field'] + '_credit_card'
-                                            elif entry['value']=='debt consolidation':
-                                                dummy_name =entry['field'] + '_debt_consolidation'
-                                            elif entry['value']=='home improvement':
-                                                dummy_name =entry['field'] + '_home_improvement'
-                                            elif entry['value']=='renewable energy':
-                                                dummy_name =entry['field'] + '_renewable_energy'
-                                            elif entry['value']=='small business':
-                                                dummy_name =entry['field'] + '_small_business'
-                                            else:
-                                                dummy_name =entry['field'] + '_'+ entry['value']
-                                        else:
-                                            dummy_name = entry['field'] + '_'+ entry['value']
-                                        #print('record_B',entry, cat_feature)
-                                        if dummy_name == dummy:
-                                            input_row[dummy] = [1]
-                                            print(dummy_name,1)
-                                        else:
-                                            #if input_row[dummy][0] != 1:
-                                            input_row[dummy] =[0]
-                                            print(dummy_name,0)
-
-
-                else:#not lending
-                    #print('not lending dataset')
-                    if entry['field'] in dataset['continuous']:
-                        input_row[entry['field']]=normalise_continuous(dataset,entry['field'],float(entry['value']))
-                    elif entry['field'] == dataset['class_name']:#write as 0 or 1
-                        for i in range(len(dataset['labels'])):
-                            if dataset['labels'][i] == entry['value']:
-                                input_row[dataset['class_name']] = [i]
-                                class_int = i
-                                original_class = i
-                    else:#dummied cat features
-                        for cat_feature in dataset['dummy']:
-                            if entry['field'] == cat_feature:
-                                for dummy in dataset['dummy'][cat_feature]:
-                                    dummy_name = entry['field'] + '_ '+ entry['value']
-                                    if dummy_name == dummy:
-                                        input_row[dummy] = [1]
-                                    else:
-                                        input_row[dummy] =[0]
-
-            record_row = input_row
-            input_df = pd.concat([input_df,input_row])
-            input_df.reset_index()
-            #add deltas
-            number_of_deltas = len(explanation[row_number][row_number+1]['delta'])
-            for delta_num in explanation[row_number][row_number+1]['delta']:#delta_num is a str
-                #because for DiCE only some features in delta first read in record as df
-                input_row = record_row
-                #print( delta_num, explanation [row_number][row_number+1]['delta'][delta_num])
-                for entry in explanation[row_number][row_number+1]['delta'][delta_num]:
-                    if dataset['name']=='LoanStats3a':
-                        if entry['field'] == dataset['class_name']:#write as 0 or 1
-                            for i in range(len(dataset['labels'])):
-                                if dataset['labels'][i] == entry['value']:
-                                    input_row[dataset['class_name']] = [i]
-                                    class_int = i
-                                    original_class = i
-                        else:
-                            if entry['field'] in dataset['human_data_dict'].keys() and dataset['human_data_dict'][entry['field']] in dataset['continuous']:
-                                #print(entry)
-                                data_col = dataset['human_data_dict'][entry['field']]
-                                #print(data_col)
-                                input_row[data_col]=normalise_continuous(dataset,data_col,float(entry['value']))
-                            elif entry['field'] in ['cost', 'distance']:
-                                print(entry['field'])
-                                #take no action
-                            else:
-                                for cat_feature in dataset['dummy']:
-                                    if entry['field'] == 'purpose of loan':
-                                        entry['field']= 'purpose'
-                                    if entry['field'] == 'credit rating grade':
-                                        entry['field']= 'grade'
-                                    if entry['field'] =='home_ownership':
-                                        entry['field'] = 'home ownership'
-                                    if entry['field'] == 'term':
-                                        entry['field'] = 'term of loan'
-                                    #print('record_A',dataset['human_data_dict'][entry['field']], cat_feature)
-                                    if dataset['human_data_dict'][entry['field']] == cat_feature:
-                                        for dummy in dataset['dummy'][cat_feature]:
-                                            if entry['field']== 'home ownership':
-                                                if entry['value'] == 'rent':
-                                                    dummy_name = dataset['human_data_dict'][entry['field']] + '_RENT'
-                                                elif entry['value'] == 'mortgaged':
-                                                    dummy_name = dataset['human_data_dict'][entry['field']] + '_MORTGAGE'
-                                                elif entry['value'] == 'none':
-                                                    dummy_name = dataset['human_data_dict'][entry['field']] + '_NONE'
-                                                elif entry['value'] == 'other':
-                                                    dummy_name = dataset['human_data_dict'][entry['field']] + '_OTHER'
-                                                elif entry['value'] == 'own':
-                                                    dummy_name = dataset['human_data_dict'][entry['field']] + '_OWN'
-                                                else:
-                                                    dummy_name = dataset['human_data_dict'][entry['field']] + '_' + entry['value']
-                                                    print(dummy_name)
-                                            elif  entry['field']== 'term of loan':
-                                                if entry['value'] == '36 months':
-                                                    dummy_name = dataset['human_data_dict'][entry['field']] + '_ 36 months'
-                                                if entry['value'] == '60 months':
-                                                    dummy_name = dataset['human_data_dict'][entry['field']] + '_ 60 months'
-                                            elif  entry['field']== 'purpose':
-                                                if entry['value']=='major purchase':
-                                                    dummy_name =entry['field'] + '_major_purchase'
-                                                elif entry['value']=='credit card':
-                                                    dummy_name =entry['field'] + '_credit_card'
-                                                elif entry['value']=='debt consolidation':
-                                                    dummy_name =entry['field'] + '_debt_consolidation'
-                                                elif entry['value']=='home improvement':
-                                                    dummy_name =entry['field'] + '_home_improvement'
-                                                elif entry['value']=='renewable energy':
-                                                    dummy_name =entry['field'] + '_renewable_energy'
-                                                elif entry['value']=='small business':
-                                                    dummy_name =entry['field'] + '_small_business'
-                                                else:
-                                                    dummy_name =entry['field'] + '_'+ entry['value']
-                                            else:
-                                                dummy_name = entry['field'] + '_'+ entry['value']
-                                            #print('record_B',entry, cat_feature)
-                                            if dummy_name == dummy:
-                                                input_row[dummy] = [1]
-                                                print(dummy_name,1)
-                                            else:
-                                                #if input_row[dummy][0] != 1:
-                                                input_row[dummy] =[0]
-                                                print(dummy_name,0)
-                    else:#not lending
-                        if entry['field'] in dataset['continuous']:
-                            #print(float(entry['value']))
-                            input_row[entry['field']]=normalise_continuous(dataset,entry['field'],float(entry['value']))[0]
-                        else:#dummied cat features
-                            for cat_feature in dataset['dummy']:
-                                if entry['field'] == cat_feature:
-                                    for dummy in dataset['dummy'][cat_feature]:
-                                        dummy_name = entry['field'] + '_ '+ entry['value']
-                                        if dummy_name == dummy:
-                                            input_row[dummy] = [1]
-                                        else:
-                                            input_row[dummy] = [0]
-                input_row[dataset['class_name']] = [get_class_int(class_int)]#is a cf so therefore other class to record
-                input_df = pd.concat([input_df,input_row])
-
-                #have df next create 1NN classifier for local points
-            X = input_df[dataset['X_columns_with_dummies']]#.values
-            y = input_df[dataset['class_name']]#.values
-
-            knn_model = KNeighborsClassifier(n_neighbors=1)
-            knn_model.fit(X,y)
-            #get relevant rows from csv of generated local points
-            local_df = pd.read_csv(file_name_in)
-            example_df = local_df.loc[local_df['example']==row_number]
-            keras_predict = example_df[dataset['class_name']].reset_index(drop=True)
-            #original_prediction = example_df[dataset['class_name']]
-            number_of_tests = len(example_df['test_number'])
-            example_df = example_df[dataset['X_columns_with_dummies']]
-            knn_predict = knn_model.predict(example_df.values)
-            #print('example_df: ',example_df)
-            #print('knn_predict: ',knn_predict)
-            #print('keras_predict: ',keras_predict)
-            for row in range(number_of_tests):#['example','test','keras_predict','knn_predict']
-                output_row = pd.DataFrame(columns=['example','test','keras_predict','knn_predict'])
-                output_row['example'] = [row_number]
-                output_row['test'] = [row]
-                output_row['keras_predict'] = [keras_predict[row]]
-                output_row['knn_predict'] = [knn_predict[row]]
-                output_row['original_class']= original_class
-                output_row['number_of_deltas']=number_of_deltas
-                output_row['number_of_deltas']=number_of_deltas
-                output_df = pd.concat([output_df,output_row])
-        output_df.to_csv(file_name_out)
-    #breakpoint()
-    #start of knn code here (funcs above)
-    #need a marking scheme on csv
-    #set_examples_csv('test_examples_knn_lending_distance.csv',1,10,99)
-    #set_output_csv('test_examples_knn_lending_distance.csv','test_outputs_knn_lending_distance.csv',99)
-    marking_df = pd.read_csv('test_outputs_knn_lending_distance.csv')
-    #need p,r,f1
-    #'We use precision, recall, and F1 for the counterfactual outcome class (Figure 3) as our main evaluation metrics because of the class imbalance in data points near the original input. To evaluate the sensitivity of these metrics to varying distance from the original input, we show these metrics for points sampled within varying distance thresholds'
-    #precision TP/TP+FP
-    #recall is TP/TP+FN
-    #want cf class for  knn  this is the opposite of keras_pred
-    #p=0
-    #r=0
-    TP=0
-    FP=0
-    TN=0
-    FN=0
-    number_wanted_deltas = 8# int or 'NA'
-    for row in range(marking_df.values.shape[0]):
-        if number_wanted_deltas == 'NA':
-            if marking_df['original_class'][row] == 0:
-                if marking_df['keras_predict'][row] < 0.5 and int(marking_df['knn_predict'][row]) < 0.5 :
-                    TN += 1
-                elif marking_df['keras_predict'][row] < 0.5  and int(marking_df['knn_predict'][row]) >= 0.5 :
-                    FP += 1
-                elif marking_df['keras_predict'][row] >= 0.5  and int(marking_df['knn_predict'][row]) < 0.5 :
-                    FN += 1
-                elif marking_df['keras_predict'][row] >= 0.5  and int(marking_df['knn_predict'][row]) > 0.5 :
-                    TP += 1
-                else:
-                    print('logic error in p,r calcs')
-                    breakpoint()
-            else:#original class == 1
-                if marking_df['keras_predict'][row] < 0.5 and int(marking_df['knn_predict'][row]) < 0.5 :
-                    TP += 1
-                elif marking_df['keras_predict'][row] < 0.5  and int(marking_df['knn_predict'][row]) >= 0.5 :
-                    FN += 1
-                elif marking_df['keras_predict'][row] >= 0.5  and int(marking_df['knn_predict'][row]) < 0.5 :
-                    FP += 1
-                elif marking_df['keras_predict'][row] >= 0.5  and int(marking_df['knn_predict'][row]) > 0.5 :
-                    TN += 1
-                else:
-                    print('logic error in p,r calcs')
-                    breakpoint()
-
-        else:
-            if number_wanted_deltas == marking_df['number_of_deltas'][row]:
-                if marking_df['original_class'][row] == 0:
-                    if marking_df['keras_predict'][row] < 0.5 and int(marking_df['knn_predict'][row]) < 0.5 :
-                        TN += 1
-                    elif marking_df['keras_predict'][row] < 0.5  and int(marking_df['knn_predict'][row]) >= 0.5 :
-                        FP += 1
-                    elif marking_df['keras_predict'][row] >= 0.5  and int(marking_df['knn_predict'][row]) < 0.5 :
-                        FN += 1
-                    elif marking_df['keras_predict'][row] >= 0.5  and int(marking_df['knn_predict'][row]) > 0.5 :
-                        TP += 1
-                    else:
-                        print('logic error in p,r calcs')
-                        breakpoint()
-                else:#original class == 1
-                    if marking_df['keras_predict'][row] < 0.5 and int(marking_df['knn_predict'][row]) < 0.5 :
-                        TP += 1
-                    elif marking_df['keras_predict'][row] < 0.5  and int(marking_df['knn_predict'][row]) >= 0.5 :
-                        FN += 1
-                    elif marking_df['keras_predict'][row] >= 0.5  and int(marking_df['knn_predict'][row]) < 0.5 :
-                        FP += 1
-                    elif marking_df['keras_predict'][row] >= 0.5  and int(marking_df['knn_predict'][row]) > 0.5 :
-                        TN += 1
-                    else:
-                        print('logic error in p,r calcs')
-                        breakpoint()
-
-    if TP == 0 or FP == 0 or TN == 0 or FN == 0:
-        print('one of the metrics == 0, potential div by 0 error')
         breakpoint()
-    precision = TP/(TP+FP)
-    recall = TP/(TP+FN)
-    f1 = (2*precision*recall)/(precision+recall)#f1 for +ve predictions
-    other_precision = TN/(TN+FN)
-    other_recall = TN/(TN+FP)
-    other_f1 = (2*other_precision*other_recall)/(other_precision+other_recall)#f1 for -ve redictions
-    #alt_p = alt_TP/(alt_TP+alt_FP)
-    #alt_r = alt_TP/(alt_TP+alt_FN)
-    #alt_f1 = (2*alt_p*alt_r)/(alt_p+alt_r)
-    accuracy = (TP+TN)/(TP+TN+FP+FN) #accuracy is best for measuring both classes
-    print('TP: ',TP,' TN: ',TN,' FP: ',FP,' FN: ', FN)
-    print('p: ',precision,' r: ',recall,' f1: ',f1)
-    print('-ve p: ',other_precision,' -ve r: ',other_recall, '-ve f1: ',other_f1)
-    print('acc: ',accuracy)
-    breakpoint()
-    #keras_predict =
-    #next add simulated local data
-    #loop 100 local points a lot of similar code is in the Immune Algorithms
+
+
+    elif argv[3] =='set_output_csv':
+        print('set_output_csv() called')
+        file_name_in = input('file name to be read (CR gives default)')
+        if file_name_in == '':
+            file_name_in = 'csv/examples.csv'
+        file_name_out = input('file name for output (CR gives default)')
+        if file_name_out == '':
+            file_name_out = 'csv/outputs.csv'
+        row_numbers = 10
+        set_output_csv(explanation, dataset, file_name_in, file_name_out, row_numbers)
+
+        breakpoint()
+
+    elif argv[3] == 'knn_stats':
+        print('knn test called')
+        file_name_out = input('file name for outputs (CR gives default)')
+        if file_name_out == '':
+            file_name_out = 'csv/outputs.csv'
+        knn_stats(file_name_out)
+        breakpoint()
+    else:
+        print('no relevant commands given in arg3')
+
+        breakpoint()
+    breakpoint('outside of if else statement for commands')#used if only wanting stats
 
 
 
 
-    breakpoint()#stop here for 1NN work()
-    pickle.dump(explanation,open('pickled_data/test_validity.p','wb'))
-    csv_prox_filename = 'csv/test_validity_compas_1cf_prox.csv'
-    csv_div_filename = 'csv/test_validity_compas_1cf_div.csv'
-
-    get_stats_write_stats(dataset, explanation, csv_prox_filename, csv_div_filename)
-    breakpoint()#this here for Data/Frame project
-
-
-    exp_list = list()
-    for e in exp_ids:
-        e = e[0]
-        exp_list.append(e)
-    exp_ids = exp_list
-    #dump whole expalanation object to json for Data/Frame to use
-
-    def write_to_text_file(endpoint,api_key,exp,text_file_object):
-        data_dict = {}
-        data_dict.update({'id':'Primary'})
-        data_dict.update({'type':'json'})
-        data_dict.update({'jsonData':exp})
-        l = list()
-        l.append(data_dict)
-        data = {}
-        data.update({'data':l})
-        data.update({'projectArguments':None})
-        data.update({'options':None})
-        #temp write output to get first json for Arria Studio delta later.
-        #text_file_object.write(json.dumps(exp))
-        bearer = 'Bearer '+ api_key
-        authorization  = {'Authorization':  bearer}
-        content = {'Content-Type': 'application/json;charset=UTF-8',}
-        headers = {}
-        headers.update(content)
-        headers.update(authorization)
-        req = requests.post(endpoint, headers= headers,json=data)
-        textJSON = req.text
-        response_object = json.loads(textJSON)
-        text = response_object[0]['result']
-        print(text)
-        text_file_object.write('\n**********************************************\n')
-        text_file_object.write(str(e))
-        text_file_object.write('\n**********************************************\n')
-        #text_file_object.write('JSON')
-        #text_file_object.write(json.dumps(exp))
-        #text_file_object.write('**********************************************')
-        text_file_object.write('TEXT\n')
-        text_file_object.write(text)
-        return text
-        #text_file_object.close()
-    #code to get explanation for row number
-    row_numbers = [3]
-    for e in exp_list:
-        file_name = 'json_explanation.json'
-        file_name = 'JSON_out/'+file_name
-        text_file = 'text_out/text_and_JSON_out.txt'
-        text_file_object = open(text_file,'a')
-        exp = explanation[e-1][e]
-        if exp['record_number'] in row_numbers:
-            #add delta alterations here for all objects
-            deltas_dict = exp['delta']
-            delta_id_list = list()
-            for delta_id in deltas_dict:
-                delta_id_list.append(delta_id)
-            #change dummy variables here
-            #preprocess deltas to remove duplicate rows and change values
-
-            #this is not relevant if no delta
-            if len(deltas_dict) > 0:
-                for i in delta_id_list:
-                    first_explanation = deltas_dict[delta_id_list[0]]
-                    filtered_deltas = list()#list of dicts remove rows where record and delta have same value
-                    processed_deltas = list() #dict of dicts,  changed from list of dict because Studio is being .... about this being a list
-                    variable_list = list() #list of used variable names for dummy values
-                    for row in first_explanation:
-                        variable_name = row['field']
-                        record_value = row['record_value']
-                        delta_value = row['value']
-                        if record_value != delta_value:#only interesting and cf if record_value and delta_value are different
-                            filtered_deltas.append(row)
-                    #insert importances of deltas here, used to sort order of presented parts of deltas
-                    #d_imp will equal:
-                    #   for continuous:  |record_value - value| transformed by scaler[column]
-                    #   for non continuous: unknown fill in later
-                    #   for non_continuous and dummy: using filtered_deltas
-                    """
-                    unfinished or started functions for sorting inputs by importance here
-                    for row in filtered_deltas:
-                        if row in dataset['scaler']:#if in scaler is continuous
-                            imp_val = np.abs(record_value - value)
-                    """
-                    for row in filtered_deltas:
-                        variable_name = row['field']
-                        record_value = row['record_value']
-                        delta_value = row['value']
-                        delta_len = len(processed_deltas)
-                        if isinstance(variable_name,str):
-                            #print('isinstance(variable_name,str')
-                            processed_deltas.append({'field':variable_name,'value':delta_value,'record_value':record_value})
-                            #processed_deltas[delta_len] = {'field':variable_name,'value':delta_value,'record_value':record_value}
-                            #print('string')
-                        else:#is dict {'name', 'value'}
-                            #print('not string')
-                            #print('NOT isinstance(variable_name,str')
-                            if variable_name['name'] not in variable_list:
-                                dict_item = ({'field':variable_name['name'],'value':'null','record_value':'null'})
-                                if record_value == '1':
-                                    dict_item['record_value'] = variable_name['value'] #set record
-                                else:
-                                    dict_item['value'] = variable_name['value']#set delta
-                                processed_deltas.append(dict_item)
-                                #processed_deltas[delta_len] = dict_item
-                            else:
-                                #alter item in list of dict
-                                for i in range(len(processed_deltas)):
-                                #for item in processed_deltas:
-                                    item = processed_deltas[i]
-                                    if item['field'] == variable_name['name']:
-                                        if record_value =='1':
-                                            item['record_value'] = variable_name['value'] #set record
-                                        else:
-                                            item['value'] = variable_name['value']#set delta
-                            variable_list.append(variable_name['name'])
-
-                    exp['delta'][i]= processed_deltas
-
-            #JSON output
-            title = str(exp['record_number'])+' : '+exp['description']
-            text_file_object.write('\n**********************************************\n')
-            text_file_object.write(title)
-            text_file_object.write('\n**********************************************\n')
-            text_file_object.write('JSON')
-            text_file_object.write(json.dumps(exp))
-            text_file_object.write('\n**********************************************\n')
-            with open(file_name,'w') as outfile:
-                json.dump(exp,outfile)
 
 
 
-            #lime output
-            #unified_explanation name
-            #paper one endpoint ='https://app.studio.arria.com:443/alite_content_generation_webapp/text/DXqjA13KnJ'
-            #paper one api_key = 'eyJhbGciOiJIUzUxMiJ9.eyJqdGkiOiJadzdGYzJUQzduNUFkaG1BeFJmak5DR1AiLCJpYXQiOjE1NzUzMDA1ODksImV4cCI6MTczMjk4MDU4OSwiaXNzIjoiQUxpdGUiLCJzdWIiOiJqNG93M3F1dXA5bXQiLCJBTGl0ZS5wZXJtIjpbInByczp4OkRYcWpBMTNLbkoiXSwiQUxpdGUudHQiOiJ1X2EifQ.0ulI4B7ttqHqfWf2oUHOxmnVpacJqihvy4mdC-jzHfDh9G1-BpznaqytkC80rQGpGWQbFF7moqKRKsImDr_RtQ'
-            endpoint = 'https://app.studio.arria.com:443/alite_content_generation_webapp/text/kqoxbEdpxd3'
-            api_key = 'eyJhbGciOiJIUzUxMiJ9.eyJqdGkiOiJGOE1abUtmaVlkVnhoYkVYRzUzU3hSeWkiLCJpYXQiOjE1ODI4MTI2MzAsImV4cCI6MTc0MDQ5MjYzMCwiaXNzIjoiQUxpdGUiLCJzdWIiOiJXa29JdUxYTUNTdDIiLCJBTGl0ZS5wZXJtIjpbInByczp4Omtxb3hiRWRweGQzIl0sIkFMaXRlLnR0IjoidV9hIn0.GEG54eaQ9ewcpLUEVNbCxbVWZRyOQ5SeBkZPZ4o7q3WkansKcnG0rq1kGgPeEwaAOtRu3ljEuRK4BItMc_mstA'
-            """
-            if exp['description'] == 'lime explanation':
-                #old endpoint and api key
-                #endpoint = 'https://app.studio.arria.com:443/alite_content_generation_webapp/text/2vzB7pvzmYP'
-                #api_key = 'eyJhbGciOiJIUzUxMiJ9.eyJqdGkiOiJ1OGFvY1lTWlVrNi0xM3MxdFprV1pMVHAiLCJpYXQiOjE1NzIyMDU3NjYsImV4cCI6MTcyOTg4NTc2NiwiaXNzIjoiQUxpdGUiLCJzdWIiOiI4dS1KRzJvOWROMzgiLCJBTGl0ZS5wZXJtIjpbInByczp4OjJ2ekI3cHZ6bVlQIl0sIkFMaXRlLnR0IjoidV9hIn0.uUfb-xWhu83of62CaTmc7TCu2kkKWvq9H-G0LbBxpWsmHNdAYgZ5fKCJmSUebvcV5UFV6VR61STRnqcBkEvV1Q'
 
-                studio_object = write_to_text_file(endpoint,api_key,exp,text_file_object)
-                html_file_name= 'text_out/lime_html.htm'
-                html_text = present_explanation.write_lime_to_html_file(html_file_name,exp,studio_object,dataset)
-            """
-            #dce output
-            #elif exp['description'] == 'diverse_coherent_explanation':
-            if exp['description'] == 'diverse_coherent_explanation' or exp['description'] == 'DiCE':
-                #old endpoint and api key
-                #endpoint = 'https://app.studio.arria.com:443/alite_content_generation_webapp/text/XgEV8BwDVdk'
-                #api_key = 'eyJhbGciOiJIUzUxMiJ9.eyJqdGkiOiJFM1kzX3NiNGdHZUt3RnJhYmxLckEtWnEiLCJpYXQiOjE1NzIzNjMyOTYsImV4cCI6MTczMDA0MzI5NiwiaXNzIjoiQUxpdGUiLCJzdWIiOiJPaUxnVlhpOElzbi0iLCJBTGl0ZS5wZXJtIjpbInByczp4OlhnRVY4QndEVmRrIl0sIkFMaXRlLnR0IjoidV9hIn0.qhC2BfUBP2XX7d_MBtbq35NW9eIk6YKeupOnjDBK3a6AnBBadaUoOuw1ZW1-FqTbcn24C4JpjkbuzTjRu5_iFg'
-                endpoint = 'https://app.studio.arria.com:443/alite_content_generation_webapp/text/bKzB7xBXZpz'#for DiCE_super
-                api_key = 'eyJhbGciOiJIUzUxMiJ9.eyJqdGkiOiJXeU01N0ZLQXZnV3duSkZoTDdMRV9vWGwiLCJpYXQiOjE1ODM0MDI2OTQsImV4cCI6MTc0MTA4MjY5NCwiaXNzIjoiQUxpdGUiLCJzdWIiOiJxWi1HZ2s2WWU5bm8iLCJBTGl0ZS5wZXJtIjpbInByczp4OmJLekI3eEJYWnB6Il0sIkFMaXRlLnR0IjoidV9hIn0.JZYvfz5jhmEykoyXun7Q28JTF2m_z7uLJACrZVJRQD1H4gs4WM3SA1_Tm2SZQlRfutaJm6FD9zIrx0kezpRZ5g'#for DiCE super
-                studio_object = write_to_text_file(endpoint,api_key,exp,text_file_object)
-                html_file_name= 'text_out/dce_html.htm'
-                html_text = present_explanation.write_dce_to_html_file(html_file_name,exp,studio_object,dataset)
 
-            #opt-AInet
-            """
-            elif exp['description'] == 'optAINet':
-                #old endpoint and api key
-                #endpoint = 'https://app.studio.arria.com:443/alite_content_generation_webapp/text/kMJw7bBZgYQ'
-                #api_key = 'eyJhbGciOiJIUzUxMiJ9.eyJqdGkiOiJZcUlEVEV2VlhiZzNHN0dhelVRZkNGR0YiLCJpYXQiOjE1NzI1MTgxNTEsImV4cCI6MTczMDE5ODE1MSwiaXNzIjoiQUxpdGUiLCJzdWIiOiJwZW42TndQMk5nTmkiLCJBTGl0ZS5wZXJtIjpbInByczp4OmtNSnc3YkJaZ1lRIl0sIkFMaXRlLnR0IjoidV9hIn0.0R5ngR0-zaKKnH6i7682isjL7IQm9dGsPhZQK6lDE2MjyOn3URuulfANjFlC8ZuktaQXY4LBBRuG9iZD2zMqJg'
-                studio_object = write_to_text_file(endpoint,api_key,exp,text_file_object)
-                html_file_name= 'text_out/opt_AINet_html.htm'
-                html_text = present_explanation.write_ais_to_html_file(html_file_name,exp,studio_object,dataset)
-            """
-        text_file_object.close()
-    import pdb; pdb.set_trace()
+
 
 
 if __name__ == "__main__":#arg1 = db_name arg2 = pickled data name arg3 = function wanted
